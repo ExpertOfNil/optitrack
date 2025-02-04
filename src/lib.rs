@@ -16,6 +16,48 @@ pub trait Decoder {
     fn decode(&mut self, src: &mut BytesMut) -> Result<Self::Item, Self::Error>;
 }
 
+#[derive(Debug)]
+pub enum Message {
+    PingResponse,
+    FrameData(Box<FrameData>),
+    ModelDef(Box<ModelDef>),
+    Unknown,
+}
+
+impl Message {
+    pub fn from_bytes(mut src: BytesMut) -> Result<Self, Box<dyn std::error::Error>> {
+        if src.len() < size_of::<u16>() {
+            return Err(format!(
+                "Not enough bytes for message ID.  Expected: {}, Got: {}",
+                src.len(),
+                size_of::<u16>()
+            )
+            .into());
+        }
+        let message_id = src.get_u16_le();
+        log::debug!("Message ID: {}", message_id);
+        let message_id = match message_id.into() {
+            MessageId::PingResponse => Message::PingResponse,
+            MessageId::FrameData => {
+                let mut codec = FrameDataCodec;
+                let frame_data = codec.decode(&mut src)?;
+                Message::FrameData(Box::new(frame_data))
+            }
+            MessageId::ModelDef => {
+                let mut codec = ModelDefCodec;
+                let modeldef = codec.decode(&mut src)?;
+                Message::ModelDef(Box::new(modeldef))
+            }
+            id => {
+                log::error!("Got message type: {:?}", id);
+                unimplemented!()
+            },
+        };
+        log::debug!("Message ID: {:?}", message_id);
+        Ok(message_id)
+    }
+}
+
 #[derive(Debug, Copy, Clone, PartialEq)]
 #[repr(u16)]
 pub enum MessageId {
@@ -67,245 +109,6 @@ impl From<u16> for MessageId {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct FrameData {
-    pub message_id: MessageId,
-    pub packet_size: u16,
-    pub frame_number: u32,
-    pub markerset_count: u32,
-    pub markerset_bytes: u32,
-    pub markersets: Vec<MarkerSet>,
-    pub unlabeled_marker_count: u32,
-    pub unlabeled_marker_bytes: u32,
-    pub unlabeled_marker_positions: Vec<Vec3>,
-    pub rigid_body_count: u32,
-    pub rigid_body_bytes: u32,
-    pub rigid_bodies: Vec<RigidBody>,
-    pub skeleton_count: u32,
-    pub skeleton_bytes: u32,
-    pub skeletons: Vec<Skeleton>,
-    pub labeled_marker_count: u32,
-    pub labeled_marker_bytes: u32,
-    pub labeled_marker_positions: Vec<LabeledMarker>,
-    pub asset_count: u32,
-    pub asset_bytes: u32,
-    pub assets: Vec<Asset>,
-    pub force_plate_count: u32,
-    pub force_plate_bytes: u32,
-    pub force_plates: Vec<ForcePlate>,
-    pub device_count: u32,
-    pub device_bytes: u32,
-    pub devices: Vec<Device>,
-    pub timecode: u32,
-    pub timecode_sub: u32,
-    pub stamps: Stamps,
-    pub frame_parameters: FrameParameters,
-}
-
-impl Default for FrameData {
-    fn default() -> Self {
-        Self {
-            message_id: MessageId::Ping,
-            packet_size: 0,
-            frame_number: 0,
-            markerset_count: 0,
-            markerset_bytes: 0,
-            markersets: Vec::new(),
-            unlabeled_marker_count: 0,
-            unlabeled_marker_bytes: 0,
-            unlabeled_marker_positions: Vec::new(),
-            rigid_body_count: 0,
-            rigid_body_bytes: 0,
-            rigid_bodies: Vec::new(),
-            skeleton_count: 0,
-            skeleton_bytes: 0,
-            skeletons: Vec::new(),
-            labeled_marker_count: 0,
-            labeled_marker_bytes: 0,
-            labeled_marker_positions: Vec::new(),
-            asset_count: 0,
-            asset_bytes: 0,
-            assets: Vec::new(),
-            force_plate_count: 0,
-            force_plate_bytes: 0,
-            force_plates: Vec::new(),
-            device_count: 0,
-            device_bytes: 0,
-            devices: Vec::new(),
-            timecode: 0,
-            timecode_sub: 0,
-            stamps: Stamps::default(),
-            frame_parameters: FrameParameters::Unrecognized,
-        }
-    }
-}
-
-impl FrameData {
-    //fn parse_start(bytes: &[u8]) -> anyhow::Result<(Self, usize)> {
-    //    // packet less 2 bytes for message id
-    //    let mut offset = 2;
-    //    log::debug!("NOTE: Offset values are post-parse");
-    //    let packet_size = u16::parse_le_bytes(bytes, &mut offset)?;
-    //    log::debug!("({offset:05}) Package Size: {}", packet_size);
-    //    let frame_number = u32::parse_le_bytes(bytes, &mut offset)?;
-    //    log::debug!("({offset:05}) Frame #: {}", frame_number);
-    //    let markerset_count = u32::parse_le_bytes(bytes, &mut offset)?;
-    //    log::debug!("({offset:05}) MarkerSet Count: {}", markerset_count);
-    //    // Parse marker sets
-    //    let markersets = (0..markerset_count)
-    //        .map(|i| {
-    //            log::debug!("------- MarkerSet #: {}", i);
-    //            MarkerSet::parse_le_bytes(bytes, &mut offset)
-    //        })
-    //        .collect::<Result<Vec<_>, _>>()?;
-    //    // Parse unlabled marker positions
-    //    let unlabeled_marker_count = u32::parse_le_bytes(bytes, &mut offset)?;
-    //    log::debug!(
-    //        "({offset:05}) Unlabeled Marker Count: {}",
-    //        unlabeled_marker_count
-    //    );
-    //    let unlabeled_marker_positions = (0..unlabeled_marker_count)
-    //        .map(|i| {
-    //            log::debug!("------- UnlabeledMarker #: {}", i);
-    //            Vec3::parse_le_bytes(bytes, &mut offset)
-    //        })
-    //        .collect::<Result<Vec<_>, _>>()?;
-    //    Ok((
-    //        Self {
-    //            packet_size,
-    //            frame_number,
-    //            markerset_count,
-    //            markersets,
-    //            unlabeled_marker_count,
-    //            unlabeled_marker_positions,
-    //            ..Default::default()
-    //        },
-    //        offset,
-    //    ))
-    //}
-
-    //fn parse_rigid_bodies(bytes: &[u8]) -> anyhow::Result<(Self, usize)> {
-    //    let (mut frame, mut offset) = Self::parse_start(bytes)?;
-    //    // Parse rigid bodies
-    //    frame.rigid_body_count = u32::parse_le_bytes(bytes, &mut offset)?;
-    //    log::debug!("({offset:05}) RigidBody Count: {}", frame.rigid_body_count);
-    //    frame.rigid_bodies = (0..frame.rigid_body_count)
-    //        .map(|i| {
-    //            log::debug!("------- RigidBody #: {}", i);
-    //            RigidBody::parse_le_bytes(bytes, &mut offset)
-    //        })
-    //        .collect::<Result<Vec<_>, _>>()?;
-    //    Ok((frame, offset))
-    //}
-
-    //pub fn from_rigid_body_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
-    //    let (frame, offset) = Self::parse_rigid_bodies(bytes)?;
-    //    log::debug!("RigidBody parsing complete at offset {}", offset);
-    //    Ok(frame)
-    //}
-
-    //pub fn from_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
-    //    let (mut frame, mut offset) = Self::parse_rigid_bodies(bytes)?;
-    //    // Parse skeletons
-    //    frame.skeleton_count = u32::parse_le_bytes(bytes, &mut offset)?;
-    //    log::debug!("({offset:05}) Skeleton Count: {}", frame.rigid_body_count,);
-    //    frame.skeletons = (0..frame.skeleton_count)
-    //        .map(|i| {
-    //            log::debug!("------- Skeleton #: {}", i);
-    //            Skeleton::parse_le_bytes(bytes, &mut offset)
-    //        })
-    //        .collect::<Result<Vec<_>, _>>()?;
-    //    // Parse labeled markers
-    //    frame.labeled_marker_count = u32::parse_le_bytes(bytes, &mut offset)?;
-    //    log::debug!(
-    //        "({offset:05}) LabeledMarker Count: {}",
-    //        frame.labeled_marker_count,
-    //    );
-    //    frame.labeled_marker_positions = (0..frame.labeled_marker_count)
-    //        .map(|i| {
-    //            log::debug!("------- LabeledMarker #: {}", i);
-    //            LabeledMarker::parse_le_bytes(bytes, &mut offset)
-    //        })
-    //        .collect::<Result<Vec<_>, _>>()?;
-    //    // Parse force plates
-    //    frame.force_plate_count = u32::parse_le_bytes(bytes, &mut offset)?;
-    //    log::debug!(
-    //        "({offset:05}) ForcePlate Count: {}",
-    //        frame.force_plate_count,
-    //    );
-    //    frame.force_plates = (0..frame.force_plate_count)
-    //        .map(|i| {
-    //            log::debug!("------- LabeledMarker #: {}", i);
-    //            ForcePlate::parse_le_bytes(bytes, &mut offset)
-    //        })
-    //        .collect::<Result<Vec<_>, _>>()?;
-    //    // Parse devices
-    //    frame.device_count = u32::parse_le_bytes(bytes, &mut offset)?;
-    //    log::debug!("({offset:05}) Device Count: {}", frame.device_count);
-    //    frame.devices = (0..frame.device_count)
-    //        .map(|i| {
-    //            log::debug!("------- Device #: {}", i);
-    //            Device::parse_le_bytes(bytes, &mut offset)
-    //        })
-    //        .collect::<Result<Vec<_>, _>>()?;
-    //    frame.timecode = u32::parse_le_bytes(bytes, &mut offset)?;
-    //    log::debug!("({offset:05}) Timecode: {}", frame.timecode);
-    //    frame.timecode_sub = u32::parse_le_bytes(bytes, &mut offset)?;
-    //    log::debug!("({offset:05}) Timecode Sub: {}", frame.timecode_sub);
-    //    frame.stamps = Stamps::parse_le_bytes(bytes, &mut offset)?;
-    //    frame.frame_parameters = FrameParameters::parse_le_bytes(bytes, &mut offset)?;
-    //    Ok(frame)
-    //}
-}
-
-#[derive(Debug, Default)]
-pub struct Vec3Codec;
-
-impl Encoder<Vec3> for Vec3Codec {
-    type Error = Box<dyn error::Error>;
-    fn encode(&mut self, item: Vec3, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        dst.extend_from_slice(&bincode::serialize(&item)?);
-        Ok(())
-    }
-}
-
-impl Decoder for Vec3Codec {
-    type Item = Vec3;
-    type Error = Box<dyn error::Error>;
-    fn decode(&mut self, src: &mut BytesMut) -> Result<Self::Item, Self::Error> {
-        Ok(Vec3 {
-            x: src.get_f32_le(),
-            y: src.get_f32_le(),
-            z: src.get_f32_le(),
-        })
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct QuatCodec;
-
-impl Encoder<Quat> for QuatCodec {
-    type Error = Box<dyn error::Error>;
-    fn encode(&mut self, item: Quat, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        dst.extend_from_slice(&bincode::serialize(&item)?);
-        Ok(())
-    }
-}
-
-impl Decoder for QuatCodec {
-    type Item = Quat;
-    type Error = Box<dyn error::Error>;
-    fn decode(&mut self, src: &mut BytesMut) -> Result<Self::Item, Self::Error> {
-        Ok(Quat::from_xyzw(
-            src.get_f32_le(),
-            src.get_f32_le(),
-            src.get_f32_le(),
-            src.get_f32_le(),
-        )
-        .normalize())
-    }
-}
-
 #[derive(Debug, Default)]
 pub struct FrameDataCodec;
 
@@ -314,8 +117,7 @@ impl Encoder<FrameData> for FrameDataCodec {
     fn encode(&mut self, item: FrameData, dst: &mut BytesMut) -> Result<(), Self::Error> {
         // reserve enough space for at least message id, packet size, frame number, all counts,
         // timecodes, timestamps, and frame parameters
-        dst.reserve(78);
-        dst.extend_from_slice(&(item.message_id as u16).to_le_bytes()[..]);
+        //dst.reserve(78);
         dst.extend_from_slice(&item.packet_size.to_le_bytes()[..]);
         dst.extend_from_slice(&item.frame_number.to_le_bytes()[..]);
         dst.extend_from_slice(&item.markerset_count.to_le_bytes()[..]);
@@ -368,12 +170,6 @@ impl Decoder for FrameDataCodec {
     type Error = Box<dyn error::Error>;
     type Item = FrameData;
     fn decode(&mut self, src: &mut BytesMut) -> Result<Self::Item, Self::Error> {
-        // must contain message id and packet size
-        if src.remaining() < 4 {
-            return Err("Not enough bytes to decode FrameDataCodec".into());
-        }
-        let message_id = MessageId::from(src.get_u16_le());
-        log::debug!("Message ID: {:?}", message_id);
         let packet_size = src.get_u16_le();
         log::debug!("Packet Size: {} bytes", packet_size);
         let frame_number = src.get_u32_le();
@@ -469,7 +265,6 @@ impl Decoder for FrameDataCodec {
             .unwrap_or(FrameParameters::Unrecognized);
 
         Ok(FrameData {
-            message_id,
             packet_size,
             frame_number,
             markerset_count,
@@ -501,6 +296,171 @@ impl Decoder for FrameDataCodec {
             stamps,
             frame_parameters,
         })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FrameData {
+    pub packet_size: u16,
+    pub frame_number: u32,
+    pub markerset_count: u32,
+    pub markerset_bytes: u32,
+    pub markersets: Vec<MarkerSet>,
+    pub unlabeled_marker_count: u32,
+    pub unlabeled_marker_bytes: u32,
+    pub unlabeled_marker_positions: Vec<Vec3>,
+    pub rigid_body_count: u32,
+    pub rigid_body_bytes: u32,
+    pub rigid_bodies: Vec<RigidBody>,
+    pub skeleton_count: u32,
+    pub skeleton_bytes: u32,
+    pub skeletons: Vec<Skeleton>,
+    pub labeled_marker_count: u32,
+    pub labeled_marker_bytes: u32,
+    pub labeled_marker_positions: Vec<LabeledMarker>,
+    pub asset_count: u32,
+    pub asset_bytes: u32,
+    pub assets: Vec<Asset>,
+    pub force_plate_count: u32,
+    pub force_plate_bytes: u32,
+    pub force_plates: Vec<ForcePlate>,
+    pub device_count: u32,
+    pub device_bytes: u32,
+    pub devices: Vec<Device>,
+    pub timecode: u32,
+    pub timecode_sub: u32,
+    pub stamps: Stamps,
+    pub frame_parameters: FrameParameters,
+}
+
+#[derive(Debug, Default)]
+pub struct ModelDefCodec;
+
+impl Decoder for ModelDefCodec {
+    type Item = ModelDef;
+    type Error = Box<dyn error::Error>;
+
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Self::Item, Self::Error> {
+        let packet_size = src.get_u16_le();
+        log::debug!("Packet Size: {} bytes", packet_size);
+        let dataset_count = src.get_u32_le();
+        let mut dataset = Vec::new();
+        log::debug!("DataSet Count: {}", dataset_count);
+        for _ in 0..dataset_count {
+            let data_type = src.get_u32_le();
+            log::debug!("Data Type: {}", data_type);
+            let size = src.get_u32_le();
+            log::debug!("Data Size: {}", size);
+            let data = match data_type {
+                0 => {
+                    let mut codec = MarkerSetDescCodec;
+                    ModelDefData::MarkerSetDesc {
+                        size,
+                        data: Box::new(codec.decode(src)?),
+                    }
+                }
+                1 => {
+                    let mut codec = RigidBodyDescCodec;
+                    ModelDefData::RigidBodyDesc {
+                        size,
+                        data: Box::new(codec.decode(src)?),
+                    }
+                }
+                5 => {
+                    let mut codec = CameraDescCodec;
+                    ModelDefData::CameraDesc {
+                        size,
+                        data: Box::new(codec.decode(src)?),
+                    }
+                }
+                _ => unimplemented!(),
+            };
+            dataset.push(data);
+        }
+
+        Ok(ModelDef {
+            packet_size,
+            dataset_count,
+            dataset,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ModelDef {
+    pub packet_size: u16,
+    pub dataset_count: u32,
+    pub dataset: Vec<ModelDefData>,
+}
+
+//#[derive(Debug, Clone)]
+//pub struct ModelDefData {
+//    pub data_type: ModelDefDataType,
+//    pub size: u32,
+//}
+
+#[derive(Debug, Clone)]
+pub enum ModelDefData {
+    MarkerSetDesc { size: u32, data: Box<MarkerSetDesc> },
+    RigidBodyDesc { size: u32, data: Box<RigidBodyDesc> },
+    SkeletonDesc,
+    ForcePlateDesc,
+    DeviceDesc,
+    CameraDesc { size: u32, data: Box<CameraDesc> },
+    AssetDesc,
+    Unknown,
+}
+
+//#[derive(Debug)]
+//pub enum ModelDefData {
+//    Mar
+//}
+
+#[derive(Debug, Default)]
+pub struct Vec3Codec;
+
+impl Encoder<Vec3> for Vec3Codec {
+    type Error = Box<dyn error::Error>;
+    fn encode(&mut self, item: Vec3, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        dst.extend_from_slice(&bincode::serialize(&item)?);
+        Ok(())
+    }
+}
+
+impl Decoder for Vec3Codec {
+    type Item = Vec3;
+    type Error = Box<dyn error::Error>;
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Self::Item, Self::Error> {
+        Ok(Vec3 {
+            x: src.get_f32_le(),
+            y: src.get_f32_le(),
+            z: src.get_f32_le(),
+        })
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct QuatCodec;
+
+impl Encoder<Quat> for QuatCodec {
+    type Error = Box<dyn error::Error>;
+    fn encode(&mut self, item: Quat, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        dst.extend_from_slice(&bincode::serialize(&item)?);
+        Ok(())
+    }
+}
+
+impl Decoder for QuatCodec {
+    type Item = Quat;
+    type Error = Box<dyn error::Error>;
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Self::Item, Self::Error> {
+        Ok(Quat::from_xyzw(
+            src.get_f32_le(),
+            src.get_f32_le(),
+            src.get_f32_le(),
+            src.get_f32_le(),
+        )
+        .normalize())
     }
 }
 
@@ -1282,6 +1242,238 @@ pub enum FrameParameters {
     Unrecognized,
 }
 
+/* MarkerSetDesc */
+
+#[derive(Debug, Default)]
+pub struct MarkerSetDescCodec;
+
+impl Encoder<MarkerSetDesc> for MarkerSetDescCodec {
+    type Error = Box<dyn std::error::Error>;
+    fn encode(&mut self, item: MarkerSetDesc, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        // reserve enough space for at least the name, marker count, and a single position
+        dst.reserve(item.name.len() + 16);
+        dst.extend_from_slice(item.name.as_bytes());
+        // end string with null terminator
+        dst.put_u8(0);
+        if item.marker_count != item.marker_names.len() as i32 {
+            log::warn!(
+                "Marker count {} does not match length of marker vec {}",
+                item.marker_count,
+                item.marker_names.len()
+            );
+            dst.extend_from_slice(&item.marker_count.to_le_bytes()[..]);
+        } else {
+            dst.extend_from_slice(&(item.marker_names.len() as i32).to_le_bytes()[..]);
+        }
+        item.marker_names.iter().for_each(|n| {
+            dst.extend_from_slice(n.as_bytes());
+        });
+        Ok(())
+    }
+}
+
+impl Decoder for MarkerSetDescCodec {
+    type Error = Box<dyn std::error::Error>;
+    type Item = MarkerSetDesc;
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Self::Item, Self::Error> {
+        let mut name_buf = Vec::new();
+        let _len = src.reader().read_until(b'\0', &mut name_buf)?;
+        let name = String::from_utf8(name_buf)?;
+
+        if src.remaining() < 16 {
+            let msg = "Not enough bytest to decode MarkerSetDesc";
+            log::error!("{}", msg);
+            return Err(msg.into());
+        }
+        log::debug!("MarkerSet name: '{}'", name);
+
+        let marker_count = src.get_i32_le();
+        log::debug!("Marker count: {}", marker_count);
+
+        let mut marker_names = Vec::new();
+        for _ in 0..marker_count {
+            let mut name_buf = Vec::new();
+            let _len = src.reader().read_until(b'\0', &mut name_buf)?;
+            marker_names.push(String::from_utf8(name_buf)?);
+        }
+
+        Ok(Self::Item {
+            name,
+            marker_count,
+            marker_names,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct MarkerSetDesc {
+    pub name: String,
+    pub marker_count: i32,
+    pub marker_names: Vec<String>,
+}
+
+impl MarkerSetDesc {
+    pub fn new(name: &str, marker_count: i32) -> Self {
+        Self {
+            name: name.to_string(),
+            marker_count,
+            marker_names: Vec::new(),
+        }
+    }
+}
+
+/* RigidBodyDesc */
+
+#[derive(Debug, Default)]
+pub struct RigidBodyDescCodec;
+
+impl Encoder<RigidBodyDesc> for RigidBodyDescCodec {
+    type Error = Box<dyn std::error::Error>;
+    fn encode(&mut self, item: RigidBodyDesc, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        // reserve enough space for at least the id, pos, and rot
+        //dst.reserve(38);
+        dst.extend_from_slice(item.name.as_bytes());
+        dst.extend_from_slice(&item.id.to_le_bytes()[..]);
+        dst.extend_from_slice(&item.parent_id.to_le_bytes()[..]);
+        dst.extend_from_slice(&item.pos.x.to_le_bytes()[..]);
+        dst.extend_from_slice(&item.pos.y.to_le_bytes()[..]);
+        dst.extend_from_slice(&item.pos.z.to_le_bytes()[..]);
+        dst.extend_from_slice(&item.marker_count.to_le_bytes()[..]);
+        item.marker_offsets.iter().for_each(|m| {
+            dst.extend_from_slice(&m.x.to_le_bytes()[..]);
+            dst.extend_from_slice(&m.x.to_le_bytes()[..]);
+            dst.extend_from_slice(&m.x.to_le_bytes()[..]);
+        });
+        item.marker_active_labels.iter().for_each(|m| {
+            dst.extend_from_slice(&m.to_le_bytes()[..]);
+            dst.extend_from_slice(&m.to_le_bytes()[..]);
+            dst.extend_from_slice(&m.to_le_bytes()[..]);
+        });
+        item.marker_names.iter().for_each(|m| {
+            dst.extend_from_slice(m.as_bytes());
+            dst.extend_from_slice(m.as_bytes());
+            dst.extend_from_slice(m.as_bytes());
+        });
+        Ok(())
+    }
+}
+
+impl Decoder for RigidBodyDescCodec {
+    type Error = Box<dyn std::error::Error>;
+    type Item = RigidBodyDesc;
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Self::Item, Self::Error> {
+        let mut name_buf = Vec::new();
+        let _len = src.reader().read_until(b'\0', &mut name_buf)?;
+        let name = String::from_utf8(name_buf)?;
+        log::debug!("RigidBodyDesc name: '{}'", name);
+
+        let id = src.get_i32_le();
+        let parent_id = src.get_i32_le();
+
+        let pos = Vec3 {
+            x: src.get_f32_le(),
+            y: src.get_f32_le(),
+            z: src.get_f32_le(),
+        };
+
+        let marker_count = src.get_i32_le();
+
+        let marker_offsets = (0..marker_count)
+            .map(|_| Vec3 {
+                x: src.get_f32_le(),
+                y: src.get_f32_le(),
+                z: src.get_f32_le(),
+            })
+            .collect();
+
+        let marker_active_labels = (0..marker_count).map(|_| src.get_i32_le()).collect();
+
+        let mut marker_names = Vec::new();
+        for _ in 0..marker_count {
+            let mut name_buf = Vec::new();
+            let _len = src.reader().read_until(b'\0', &mut name_buf)?;
+            marker_names.push(String::from_utf8(name_buf)?);
+        }
+
+        Ok(RigidBodyDesc {
+            name,
+            id,
+            parent_id,
+            pos,
+            marker_count,
+            marker_offsets,
+            marker_active_labels,
+            marker_names,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RigidBodyDesc {
+    pub name: String,
+    pub id: i32,
+    pub parent_id: i32,
+    pub pos: Vec3,
+    pub marker_count: i32,
+    pub marker_offsets: Vec<Vec3>,
+    pub marker_active_labels: Vec<i32>,
+    pub marker_names: Vec<String>,
+}
+
+/* CameraDesc */
+
+#[derive(Debug, Default)]
+pub struct CameraDescCodec;
+
+impl Encoder<CameraDesc> for CameraDescCodec {
+    type Error = Box<dyn std::error::Error>;
+    fn encode(&mut self, item: CameraDesc, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        // reserve enough space for at least the id, pos, and rot
+        dst.reserve(item.name.len() + 28);
+        dst.extend_from_slice(item.name.as_bytes());
+        dst.extend_from_slice(&item.pos.x.to_le_bytes()[..]);
+        dst.extend_from_slice(&item.pos.y.to_le_bytes()[..]);
+        dst.extend_from_slice(&item.pos.z.to_le_bytes()[..]);
+        dst.extend_from_slice(&item.rot.x.to_le_bytes()[..]);
+        dst.extend_from_slice(&item.rot.y.to_le_bytes()[..]);
+        dst.extend_from_slice(&item.rot.z.to_le_bytes()[..]);
+        dst.extend_from_slice(&item.rot.w.to_le_bytes()[..]);
+        Ok(())
+    }
+}
+
+impl Decoder for CameraDescCodec {
+    type Error = Box<dyn std::error::Error>;
+    type Item = CameraDesc;
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Self::Item, Self::Error> {
+        let mut name_buf = Vec::new();
+        let _len = src.reader().read_until(b'\0', &mut name_buf)?;
+        let name = String::from_utf8(name_buf)?;
+
+        let pos = Vec3 {
+            x: src.get_f32_le(),
+            y: src.get_f32_le(),
+            z: src.get_f32_le(),
+        };
+
+        let rot = Quat::from_xyzw(
+            src.get_f32_le(),
+            src.get_f32_le(),
+            src.get_f32_le(),
+            src.get_f32_le(),
+        );
+
+        Ok(CameraDesc { name, pos, rot })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CameraDesc {
+    pub name: String,
+    pub pos: Vec3,
+    pub rot: Quat,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1290,14 +1482,40 @@ mod tests {
         let _ = env_logger::builder().is_test(true).try_init();
     }
 
+    //#[test]
+    //fn parse_frame() {
+    //    init();
+    //    let path = std::path::PathBuf::from("src/packet.log");
+    //    let packet = std::fs::read(path).unwrap();
+    //    let buf = BytesMut::from(packet.as_slice());
+    //    let message = Message::from_bytes(buf).expect("Failed to decode message from bytes");
+    //    match message {
+    //        Message::FrameData(frame) => {
+    //            assert_eq!(frame.packet_size, 369);
+    //            assert_eq!(frame.frame_number, 197792);
+    //            assert_eq!(frame.markerset_count, 2);
+    //            assert_eq!(frame.markerset_bytes, 209);
+    //            assert_eq!(frame.unlabeled_marker_count, 0);
+    //            assert_eq!(frame.unlabeled_marker_bytes, 0);
+    //            assert_eq!(frame.rigid_body_count, 1);
+    //            assert_eq!(frame.rigid_body_bytes, 38);
+    //        }
+    //        val => panic!("Expected FrameData, got {:?}", val),
+    //    };
+    //}
+
     #[test]
-    fn parse_frame() {
+    fn parse_modeldef() {
         init();
-        let path = std::path::PathBuf::from("src/packet.log");
+        let path = std::path::PathBuf::from("src/packet.modeldef.log");
         let packet = std::fs::read(path).unwrap();
-        let mut buf = BytesMut::from(packet.as_slice());
-        let mut frame_codec = FrameDataCodec;
-        let frame = frame_codec.decode(&mut buf);
-        assert!(frame.is_ok());
+        let buf = BytesMut::from(packet.as_slice());
+        let message = Message::from_bytes(buf).expect("Failed to decode message from bytes");
+        match message {
+            Message::ModelDef(model) => {
+                assert!(false)
+            }
+            val => panic!("Expected FrameData, got {:?}", val),
+        };
     }
 }
