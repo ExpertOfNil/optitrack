@@ -51,9 +51,8 @@ impl Message {
             id => {
                 log::error!("Got message type: {:?}", id);
                 unimplemented!()
-            },
+            }
         };
-        log::debug!("Message ID: {:?}", message_id);
         Ok(message_id)
     }
 }
@@ -393,12 +392,6 @@ pub struct ModelDef {
     pub dataset: Vec<ModelDefData>,
 }
 
-//#[derive(Debug, Clone)]
-//pub struct ModelDefData {
-//    pub data_type: ModelDefDataType,
-//    pub size: u32,
-//}
-
 #[derive(Debug, Clone)]
 pub enum ModelDefData {
     MarkerSetDesc { size: u32, data: Box<MarkerSetDesc> },
@@ -410,11 +403,6 @@ pub enum ModelDefData {
     AssetDesc,
     Unknown,
 }
-
-//#[derive(Debug)]
-//pub enum ModelDefData {
-//    Mar
-//}
 
 #[derive(Debug, Default)]
 pub struct Vec3Codec;
@@ -1449,12 +1437,14 @@ impl Decoder for CameraDescCodec {
         let mut name_buf = Vec::new();
         let _len = src.reader().read_until(b'\0', &mut name_buf)?;
         let name = String::from_utf8(name_buf)?;
+        log::debug!("CameraDesc name: {}", name);
 
         let pos = Vec3 {
             x: src.get_f32_le(),
             y: src.get_f32_le(),
             z: src.get_f32_le(),
         };
+        log::debug!("CameraDesc pos: {}", pos);
 
         let rot = Quat::from_xyzw(
             src.get_f32_le(),
@@ -1462,6 +1452,7 @@ impl Decoder for CameraDescCodec {
             src.get_f32_le(),
             src.get_f32_le(),
         );
+        log::debug!("CameraDesc rot: {}", rot);
 
         Ok(CameraDesc { name, pos, rot })
     }
@@ -1479,43 +1470,41 @@ mod tests {
     use super::*;
 
     fn init() {
-        let _ = env_logger::builder().is_test(true).try_init();
+        let _ = env_logger::builder()
+            .filter_level(log::LevelFilter::Trace)
+            .is_test(true)
+            .try_init();
     }
 
-    //#[test]
-    //fn parse_frame() {
-    //    init();
-    //    let path = std::path::PathBuf::from("src/packet.log");
-    //    let packet = std::fs::read(path).unwrap();
-    //    let buf = BytesMut::from(packet.as_slice());
-    //    let message = Message::from_bytes(buf).expect("Failed to decode message from bytes");
-    //    match message {
-    //        Message::FrameData(frame) => {
-    //            assert_eq!(frame.packet_size, 369);
-    //            assert_eq!(frame.frame_number, 197792);
-    //            assert_eq!(frame.markerset_count, 2);
-    //            assert_eq!(frame.markerset_bytes, 209);
-    //            assert_eq!(frame.unlabeled_marker_count, 0);
-    //            assert_eq!(frame.unlabeled_marker_bytes, 0);
-    //            assert_eq!(frame.rigid_body_count, 1);
-    //            assert_eq!(frame.rigid_body_bytes, 38);
-    //        }
-    //        val => panic!("Expected FrameData, got {:?}", val),
-    //    };
-    //}
-
     #[test]
-    fn parse_modeldef() {
+    fn parse_frame() {
         init();
-        let path = std::path::PathBuf::from("src/packet.modeldef.log");
+        let path = std::path::PathBuf::from("src/FrameData.bin");
         let packet = std::fs::read(path).unwrap();
         let buf = BytesMut::from(packet.as_slice());
         let message = Message::from_bytes(buf).expect("Failed to decode message from bytes");
         match message {
-            Message::ModelDef(model) => {
-                assert!(false)
+            Message::FrameData(frame) => {
+                assert_eq!(frame.packet_size, 369);
+                assert_eq!(frame.frame_number, 197792);
+                assert_eq!(frame.markerset_count, 2);
+                assert_eq!(frame.markerset_bytes, 209);
+                assert_eq!(frame.unlabeled_marker_count, 0);
+                assert_eq!(frame.unlabeled_marker_bytes, 0);
+                assert_eq!(frame.rigid_body_count, 1);
+                assert_eq!(frame.rigid_body_bytes, 38);
             }
             val => panic!("Expected FrameData, got {:?}", val),
         };
+    }
+
+    #[test]
+    fn parse_modeldef() {
+        init();
+        let path = std::path::PathBuf::from("src/ModelDef.bin");
+        let packet = std::fs::read(path).unwrap();
+        let buf = BytesMut::from(packet.as_slice());
+        let message = Message::from_bytes(buf);
+        assert!(message.is_ok());
     }
 }
