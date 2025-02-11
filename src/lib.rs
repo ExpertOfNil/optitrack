@@ -651,10 +651,13 @@ impl Decoder for RigidBodyCodec {
         .normalize();
 
         let mean_marker_err = src.get_f32_le();
+        let is_tracking_valid = (src.get_u16_le() & 0x01) != 0;
+
         Ok(RigidBody {
             id,
             pos,
             rot,
+            is_tracking_valid,
             mean_marker_err,
         })
     }
@@ -665,16 +668,15 @@ pub struct RigidBody {
     pub id: u32,
     pub pos: Vec3,
     pub rot: Quat,
+    pub is_tracking_valid: bool,
     pub mean_marker_err: f32,
 }
 
 impl RigidBody {
     pub fn rub_to_frd(self) -> Self {
         Self {
-            id: self.id,
             pos: glam::vec3(self.pos.x, self.pos.z, -self.pos.y),
-            rot: self.rot,
-            mean_marker_err: self.mean_marker_err,
+            ..self
         }
     }
 }
