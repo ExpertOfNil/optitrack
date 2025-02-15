@@ -25,27 +25,42 @@ pub enum Message {
 }
 
 impl Message {
-    pub fn from_bytes(mut src: BytesMut) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn peek_id(src: &[u8]) -> Option<MessageId> {
+        if src.len() < size_of::<u16>() {
+            log::warn!(
+                "Not enough bytes for message ID.  Expected: {}, Got: {}",
+                size_of::<u16>(),
+                src.len(),
+            );
+            return None;
+        }
+        let bytes = (&src[..2]).try_into().ok()?;
+        let id: u16 = u16::from_le_bytes(bytes);
+        Some(id.into())
+    }
+
+    pub fn from_bytes(src: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
         if src.len() < size_of::<u16>() {
             return Err(format!(
                 "Not enough bytes for message ID.  Expected: {}, Got: {}",
+                size_of::<u16>(),
                 src.len(),
-                size_of::<u16>()
             )
             .into());
         }
-        let message_id = src.get_u16_le();
+        let mut bytes = BytesMut::from(src);
+        let message_id = bytes.get_u16_le();
         log::debug!("Message ID: {}", message_id);
         let message_id = match message_id.into() {
             MessageId::PingResponse => Message::PingResponse,
             MessageId::FrameData => {
                 let mut codec = FrameDataCodec;
-                let frame_data = codec.decode(&mut src)?;
+                let frame_data = codec.decode(&mut bytes)?;
                 Message::FrameData(Box::new(frame_data))
             }
             MessageId::ModelDef => {
                 let mut codec = ModelDefCodec;
-                let modeldef = codec.decode(&mut src)?;
+                let modeldef = codec.decode(&mut bytes)?;
                 Message::ModelDef(Box::new(modeldef))
             }
             id => {
@@ -259,9 +274,8 @@ impl Decoder for FrameDataCodec {
         let stamps: Stamps = stamps_codec.decode(src).unwrap_or_default();
         log::debug!("Stamps: {:?}", stamps);
         let mut frame_parameters_codec = FrameParametersCodec::default();
-        let frame_parameters: FrameParameters = frame_parameters_codec
-            .decode(src)
-            .unwrap_or(FrameParameters::Unrecognized);
+        let frame_parameters: FrameParameters =
+            frame_parameters_codec.decode(src).unwrap_or_default();
 
         Ok(FrameData {
             packet_size,
@@ -1117,8 +1131,6 @@ impl Encoder<Stamps> for StampsCodec {
         dst.extend_from_slice(&item.timestamp_tx.to_le_bytes()[..]);
         dst.extend_from_slice(&item.timestamp_precision.to_le_bytes()[..]);
         dst.extend_from_slice(&item.timestamp_precision_fraction.to_le_bytes()[..]);
-        let mut frame_param_codec = FrameParametersCodec::default();
-        frame_param_codec.encode(item.param, dst)?;
         Ok(())
     }
 }
@@ -1132,11 +1144,11 @@ impl Decoder for StampsCodec {
         }
         let timestamp = src.get_f64_le();
         log::debug!("Timestamp: {}", timestamp);
-        let timestamp_mid = src.get_f64_le();
+        let timestamp_mid = src.get_i64_le();
         log::debug!("Timestamp Mid: {}", timestamp_mid);
-        let timestamp_recv = src.get_f64_le();
+        let timestamp_recv = src.get_i64_le();
         log::debug!("Timestamp Recv: {}", timestamp_recv);
-        let timestamp_tx = src.get_f64_le();
+        let timestamp_tx = src.get_i64_le();
         log::debug!("Timestamp Tx: {}", timestamp_tx);
         let timestamp_precision = src.get_i32_le();
         log::debug!("Timestamp Precision: {}", timestamp_precision);
@@ -1146,13 +1158,6 @@ impl Decoder for StampsCodec {
             timestamp_precision_fraction
         );
 
-        let mut frame_param_codec = FrameParametersCodec::default();
-        let param: FrameParameters = match frame_param_codec.decode(src) {
-            Ok(fp) => fp,
-            _ => FrameParameters::Unrecognized,
-        };
-        log::debug!("Timestamp Parameter: {:?}", param);
-
         Ok(Stamps {
             timestamp,
             timestamp_mid,
@@ -1160,7 +1165,6 @@ impl Decoder for StampsCodec {
             timestamp_tx,
             timestamp_precision,
             timestamp_precision_fraction,
-            param,
         })
     }
 }
@@ -1168,24 +1172,22 @@ impl Decoder for StampsCodec {
 #[derive(Debug, Copy, Clone)]
 pub struct Stamps {
     pub timestamp: f64,
-    pub timestamp_mid: f64,
-    pub timestamp_recv: f64,
-    pub timestamp_tx: f64,
+    pub timestamp_mid: i64,
+    pub timestamp_recv: i64,
+    pub timestamp_tx: i64,
     pub timestamp_precision: i32,
     pub timestamp_precision_fraction: i32,
-    pub param: FrameParameters,
 }
 
 impl Default for Stamps {
     fn default() -> Self {
         Self {
             timestamp: 0.0,
-            timestamp_mid: 0.0,
-            timestamp_recv: 0.0,
-            timestamp_tx: 0.0,
+            timestamp_mid: 0,
+            timestamp_recv: 0,
+            timestamp_tx: 0,
             timestamp_precision: 0,
             timestamp_precision_fraction: 0,
-            param: FrameParameters::Unrecognized,
         }
     }
 }
@@ -1198,13 +1200,7 @@ impl Encoder<FrameParameters> for FrameParametersCodec {
     fn encode(&mut self, item: FrameParameters, dst: &mut BytesMut) -> Result<(), Self::Error> {
         // reserve enough space for at least value count and 1 value
         dst.reserve(2);
-        match item {
-            FrameParameters::IsRecording => dst.extend_from_slice(&1_u16.to_le_bytes()[..]),
-            FrameParameters::TrackingModelsChanged => {
-                dst.extend_from_slice(&2_u16.to_le_bytes()[..])
-            }
-            _ => dst.extend_from_slice(&0_u16.to_le_bytes()[..]),
-        }
+        dst.extend_from_slice(&item.param.to_le_bytes());
         Ok(())
     }
 }
@@ -1216,20 +1212,25 @@ impl Decoder for FrameParametersCodec {
         if src.remaining() < 2 {
             return Err("Not enough bytes to decode FrameParameters".into());
         }
-        match src.get_u16() {
-            0x01 => Ok(FrameParameters::IsRecording),
-            0x02 => Ok(FrameParameters::TrackingModelsChanged),
-            _ => Ok(FrameParameters::Unrecognized),
-        }
+        let param = src.get_i16_le();
+        log::debug!("Param: {}", param);
+        let is_recording = (param & 0x01) != 0;
+        log::debug!("Is Recording: {}", is_recording);
+        let tracked_models_changed = (param & 0x02) != 0;
+        log::debug!("Tracking Models Changed: {}", tracked_models_changed);
+        Ok(FrameParameters {
+            param,
+            is_recording,
+            tracked_models_changed,
+        })
     }
 }
 
-#[derive(Debug, Copy, Clone)]
-#[repr(u16)]
-pub enum FrameParameters {
-    IsRecording,
-    TrackingModelsChanged,
-    Unrecognized,
+#[derive(Debug, Copy, Clone, Default)]
+pub struct FrameParameters {
+    pub param: i16,
+    pub is_recording: bool,
+    pub tracked_models_changed: bool,
 }
 
 /* MarkerSetDesc */
@@ -1483,18 +1484,34 @@ mod tests {
         init();
         let path = std::path::PathBuf::from("src/FrameData.bin");
         let packet = std::fs::read(path).unwrap();
-        let buf = BytesMut::from(packet.as_slice());
-        let message = Message::from_bytes(buf).expect("Failed to decode message from bytes");
+        let message = Message::from_bytes(&packet).expect("Failed to decode message from bytes");
         match message {
             Message::FrameData(frame) => {
-                assert_eq!(frame.packet_size, 369);
-                assert_eq!(frame.frame_number, 197792);
-                assert_eq!(frame.markerset_count, 2);
-                assert_eq!(frame.markerset_bytes, 209);
+                assert_eq!(frame.packet_size, 1990);
+                assert_eq!(frame.frame_number, 169383987);
+                assert_eq!(frame.markerset_count, 6);
+                assert_eq!(frame.markerset_bytes, 1678);
                 assert_eq!(frame.unlabeled_marker_count, 0);
                 assert_eq!(frame.unlabeled_marker_bytes, 0);
-                assert_eq!(frame.rigid_body_count, 1);
-                assert_eq!(frame.rigid_body_bytes, 38);
+                assert_eq!(frame.rigid_body_count, 5);
+                assert_eq!(frame.rigid_body_bytes, 190);
+                assert_eq!(frame.skeleton_count, 0);
+                assert_eq!(frame.skeleton_bytes, 0);
+                assert_eq!(frame.labeled_marker_count, 0);
+                assert_eq!(frame.labeled_marker_bytes, 0);
+                assert_eq!(frame.device_count, 0);
+                assert_eq!(frame.device_bytes, 0);
+                assert_eq!(frame.device_count, 0);
+                assert_eq!(frame.device_bytes, 0);
+                assert!((frame.stamps.timestamp - 1411533.23).abs() < 1e-2);
+                assert_eq!(frame.stamps.timestamp_mid, 25742528329784);
+                assert_eq!(frame.stamps.timestamp_recv, 25742528388661);
+                assert_eq!(frame.stamps.timestamp_tx, 25742528459914);
+                assert_eq!(frame.stamps.timestamp_precision, 0);
+                assert_eq!(frame.stamps.timestamp_precision_fraction, 0);
+                assert_eq!(frame.frame_parameters.param, 0);
+                assert!(!frame.frame_parameters.is_recording);
+                assert!(!frame.frame_parameters.tracked_models_changed);
             }
             val => panic!("Expected FrameData, got {:?}", val),
         };
@@ -1505,8 +1522,7 @@ mod tests {
         init();
         let path = std::path::PathBuf::from("src/ModelDef.bin");
         let packet = std::fs::read(path).unwrap();
-        let buf = BytesMut::from(packet.as_slice());
-        let message = Message::from_bytes(buf);
+        let message = Message::from_bytes(&packet);
         assert!(message.is_ok());
     }
 }
