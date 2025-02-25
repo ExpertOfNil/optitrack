@@ -5,6 +5,37 @@ use std::{
     io::{self, BufRead},
 };
 
+pub const VERSION: [u8; 4] = [4, 1, 0, 0];
+
+pub const fn connect_packet() -> [u8; 270] {
+    let mut payload = [0u8; 270];
+    payload[4] = b'P';
+    payload[5] = b'i';
+    payload[6] = b'n';
+    payload[7] = b'g';
+    payload[265] = VERSION[0];
+    payload[266] = VERSION[1];
+    payload[267] = VERSION[2];
+    payload[268] = VERSION[3];
+    payload
+}
+
+pub const fn request_framedata_packet() -> [u8; 5] {
+    let mut payload = [0u8; 5];
+    let command: [u8; 2] = (MessageId::FrameData as u16).to_le_bytes();
+    payload[0] = command[0];
+    payload[1] = command[1];
+    payload
+}
+
+pub const fn request_modeldef_packet() -> [u8; 5] {
+    let mut payload = [0u8; 5];
+    let command: [u8; 2] = (MessageId::ModelDef as u16).to_le_bytes();
+    payload[0] = command[0];
+    payload[1] = command[1];
+    payload
+}
+
 pub trait Encoder<Item> {
     type Error: From<io::Error>;
     fn encode(&mut self, item: Item, dst: &mut BytesMut) -> Result<(), Self::Error>;
