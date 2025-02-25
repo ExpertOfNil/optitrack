@@ -30,7 +30,7 @@ pub const fn request_framedata_packet() -> [u8; 5] {
 
 pub const fn request_modeldef_packet() -> [u8; 5] {
     let mut payload = [0u8; 5];
-    let command: [u8; 2] = (MessageId::ModelDef as u16).to_le_bytes();
+    let command: [u8; 2] = (MessageId::RequestModelDef as u16).to_le_bytes();
     payload[0] = command[0];
     payload[1] = command[1];
     payload
@@ -49,7 +49,7 @@ pub trait Decoder {
 
 #[derive(Debug)]
 pub enum Message {
-    PingResponse,
+    PingResponse(Box<PingResponse>),
     FrameData(Box<FrameData>),
     ModelDef(Box<ModelDef>),
     Unknown,
@@ -83,7 +83,11 @@ impl Message {
         let message_id = bytes.get_u16_le();
         log::debug!("Message ID: {}", message_id);
         let message_id = match message_id.into() {
-            MessageId::PingResponse => Message::PingResponse,
+            MessageId::PingResponse => {
+                let mut codec = PingResponseCodec;
+                let ping_res = codec.decode(&mut bytes)?;
+                Message::PingResponse(Box::new(ping_res))
+            }
             MessageId::FrameData => {
                 let mut codec = FrameDataCodec;
                 let frame_data = codec.decode(&mut bytes)?;
@@ -152,6 +156,49 @@ impl From<u16> for MessageId {
             _ => Self::Unrecognized,
         }
     }
+}
+
+#[derive(Debug, Default)]
+pub struct PingResponseCodec;
+
+impl Decoder for PingResponseCodec {
+    type Item = PingResponse;
+    type Error = Box<dyn std::error::Error>;
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Self::Item, Self::Error> {
+        let packet_size = src.get_i16_le();
+        let mut name_buf = Vec::new();
+        let len = src.reader().read_until(b'\0', &mut name_buf)?;
+        let app_name = String::from_utf8(name_buf)?;
+        log::debug!("Application name: {}", app_name);
+        assert!(len <= 256);
+        src.advance(256 - len);
+        let server_version = [
+            src.get_u8(),
+            src.get_u8(),
+            src.get_u8(),
+            src.get_u8(),
+        ];
+        let natnet_version = [
+            src.get_u8(),
+            src.get_u8(),
+            src.get_u8(),
+            src.get_u8(),
+        ];
+        Ok(PingResponse {
+            packet_size,
+            app_name,
+            server_version,
+            natnet_version,
+        })
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct PingResponse {
+    pub packet_size: i16,
+    pub app_name: String,
+    pub server_version: [u8; 4],
+    pub natnet_version: [u8; 4],
 }
 
 #[derive(Debug, Default)]
