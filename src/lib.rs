@@ -20,9 +20,21 @@ pub const fn connect_packet() -> [u8; 270] {
     payload
 }
 
-// Note: using the `KeepAlive` value results in a `Unrecognized` (100) response
-pub const fn keepalive_packet() -> [u8; 5] {
-    [0u8; 5]
+pub const fn keepalive_packet() -> [u8; 12] {
+    let mut packet = [0u8; 12];
+    let command = &(MessageId::KeepAlive as u16).to_le_bytes();
+    packet[0] = command[0];
+    packet[1] = command[1];
+    packet[2] = b'k';
+    packet[3] = b'e';
+    packet[4] = b'e';
+    packet[5] = b'p';
+    packet[6] = b'a';
+    packet[7] = b'l';
+    packet[8] = b'i';
+    packet[9] = b'v';
+    packet[10] = b'e';
+    packet
 }
 
 pub const fn request_modeldef_packet() -> [u8; 5] {
