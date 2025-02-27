@@ -20,12 +20,9 @@ pub const fn connect_packet() -> [u8; 270] {
     payload
 }
 
-pub const fn request_framedata_packet() -> [u8; 5] {
-    let mut payload = [0u8; 5];
-    let command: [u8; 2] = (MessageId::FrameData as u16).to_le_bytes();
-    payload[0] = command[0];
-    payload[1] = command[1];
-    payload
+// Note: using the `KeepAlive` value results in a `Unrecognized` (100) response
+pub const fn keepalive_packet() -> [u8; 5] {
+    [0u8; 5]
 }
 
 pub const fn request_modeldef_packet() -> [u8; 5] {
